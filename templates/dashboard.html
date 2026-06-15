@@ -1,0 +1,306 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Student Performance Predictor{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1 class="page-title">System Dashboard</h1>
+  <p class="page-subtitle">
+    Live analytics and system health — auto-refreshes every <strong>30 seconds</strong>.
+    <button class="btn btn-ghost btn-sm" id="refresh-now-btn" style="margin-left:12px;">↺ Refresh Now</button>
+    <span class="refresh-badge" id="refresh-countdown"></span>
+  </p>
+</div>
+
+<!-- ── KPI Cards ──────────────────────────────────────────────────────────── -->
+<div class="kpi-grid" id="kpi-grid">
+  <div class="kpi-card" id="kpi-total">
+    <div class="kpi-icon">🔮</div>
+    <div class="kpi-body">
+      <div class="kpi-value" id="kpi-predictions">—</div>
+      <div class="kpi-label">Total Predictions</div>
+    </div>
+    <div class="kpi-trend" id="trend-predictions"></div>
+  </div>
+  <div class="kpi-card" id="kpi-students">
+    <div class="kpi-icon">👨‍🎓</div>
+    <div class="kpi-body">
+      <div class="kpi-value" id="kpi-students-val">—</div>
+      <div class="kpi-label">Unique Students</div>
+    </div>
+  </div>
+  <div class="kpi-card" id="kpi-avg">
+    <div class="kpi-icon">📈</div>
+    <div class="kpi-body">
+      <div class="kpi-value" id="kpi-avg-grade">—</div>
+      <div class="kpi-label">Avg Predicted Grade</div>
+    </div>
+  </div>
+  <div class="kpi-card" id="kpi-uptime">
+    <div class="kpi-icon">⏱️</div>
+    <div class="kpi-body">
+      <div class="kpi-value" id="kpi-uptime-val">—</div>
+      <div class="kpi-label">System Uptime</div>
+    </div>
+  </div>
+  <div class="kpi-card" id="kpi-db">
+    <div class="kpi-icon">🗄️</div>
+    <div class="kpi-body">
+      <div class="kpi-value" id="kpi-db-size">—</div>
+      <div class="kpi-label">Database Size</div>
+    </div>
+  </div>
+  <div class="kpi-card" id="kpi-health">
+    <div class="kpi-icon">💚</div>
+    <div class="kpi-body">
+      <div class="kpi-value" id="kpi-health-status">—</div>
+      <div class="kpi-label">System Health</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Bottom row: Recent Predictions + Grade Chart ──────────────────────── -->
+<div class="dashboard-bottom">
+
+  <!-- Recent Predictions table -->
+  <div class="card dashboard-table-card">
+    <div class="card-header">
+      <span class="card-icon">🕒</span>
+      <h2 class="card-title">Recent Predictions</h2>
+    </div>
+    <div class="table-wrapper">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Student ID</th>
+            <th>Grade</th>
+            <th>Risk</th>
+            <th>Confidence</th>
+            <th>Time</th>
+          </tr>
+        </thead>
+        <tbody id="recent-tbody">
+          <tr><td colspan="5" class="loading-row">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Grade Distribution bar chart (Canvas) -->
+  <div class="card chart-card">
+    <div class="card-header">
+      <span class="card-icon">📊</span>
+      <h2 class="card-title">Grade Distribution</h2>
+    </div>
+    <canvas id="grade-chart" width="400" height="260" aria-label="Grade distribution bar chart"></canvas>
+    <p class="chart-note" id="chart-note"></p>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── Data state ─────────────────────────────────────────────────────────────────
+let _allRecent    = [];
+let _refreshTimer = 30;
+let _countdown    = null;
+let _chartCtx     = null;
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  _chartCtx = document.getElementById('grade-chart').getContext('2d');
+  loadDashboard();
+  startCountdown();
+});
+
+document.getElementById('refresh-now-btn').addEventListener('click', () => {
+  clearInterval(_countdown);
+  _refreshTimer = 30;
+  loadDashboard();
+  startCountdown();
+});
+
+// ── Load stats + recent predictions ──────────────────────────────────────────
+async function loadDashboard() {
+  await Promise.all([loadStats(), loadRecent()]);
+}
+
+async function loadStats() {
+  try {
+    const [statsRes, healthRes] = await Promise.all([
+      fetch('/api/stats'),
+      fetch('/api/health'),
+    ]);
+    const stats  = await statsRes.json();
+    const health = await healthRes.json();
+
+    if (stats.success) {
+      const s = stats.stats;
+      animateCount('kpi-predictions', s.total_predictions);
+      animateCount('kpi-students-val', s.total_students);
+      document.getElementById('kpi-avg-grade').textContent =
+        s.avg_predicted_grade != null ? s.avg_predicted_grade.toFixed(1) : '—';
+      document.getElementById('kpi-uptime-val').textContent = s.system_uptime || '—';
+      document.getElementById('kpi-db-size').textContent =
+        s.database_size_mb != null ? s.database_size_mb + ' MB' : '—';
+    }
+
+    const statusEl  = document.getElementById('kpi-health-status');
+    const healthDot = document.getElementById('health-dot');
+    const isHealthy = health.status === 'healthy';
+    statusEl.textContent  = isHealthy ? 'Healthy' : 'Degraded';
+    statusEl.style.color  = isHealthy ? 'var(--color-success)' : 'var(--color-danger)';
+    healthDot.className   = isHealthy ? 'status-dot dot-green' : 'status-dot dot-red';
+  } catch (err) {
+    document.getElementById('kpi-health-status').textContent = 'Offline';
+  }
+}
+
+async function loadRecent() {
+  try {
+    const res  = await fetch('/api/recent?limit=10');
+    const json = await res.json();
+    if (!json.success) return;
+
+    _allRecent = json.predictions;
+    renderRecentTable(_allRecent);
+    drawGradeChart(_allRecent);
+  } catch (err) {
+    document.getElementById('recent-tbody').innerHTML =
+      '<tr><td colspan="5" class="loading-row">Failed to load.</td></tr>';
+  }
+}
+
+// ── Recent table ──────────────────────────────────────────────────────────────
+function renderRecentTable(preds) {
+  const tbody   = document.getElementById('recent-tbody');
+  const riskIcon = { low:'🟢', medium:'🟡', high:'🟠', critical:'🔴' };
+  if (!preds.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="loading-row">No predictions yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = preds.map(p => {
+    const ts   = new Date(p.prediction_timestamp).toLocaleTimeString();
+    const conf = Math.round(p.confidence_score * 100);
+    return `<tr>
+      <td><a href="/history?student_id=${p.student_id}" class="link">${p.student_id}</a></td>
+      <td><strong class="grade-cell grade-${p.risk_level}">${p.predicted_grade.toFixed(1)}</strong></td>
+      <td>${riskIcon[p.risk_level] || ''} ${p.risk_level}</td>
+      <td><div class="mini-bar-wrap"><div class="mini-bar" style="width:${conf}%"></div><span>${conf}%</span></div></td>
+      <td class="ts-cell">${ts}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Grade Distribution Bar Chart (vanilla Canvas) ─────────────────────────────
+function drawGradeChart(preds) {
+  const canvas = document.getElementById('grade-chart');
+  const ctx    = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  if (!preds.length) {
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.font = '16px Inter';
+    ctx.textAlign = 'center';
+    ctx.fillText('No data yet — make some predictions!', W/2, H/2);
+    document.getElementById('chart-note').textContent = '';
+    return;
+  }
+
+  // Bucket into grade bands
+  const bands  = ['0–49','50–59','60–74','75–89','90–100'];
+  const counts = [0, 0, 0, 0, 0];
+  preds.forEach(p => {
+    const g = p.predicted_grade;
+    if      (g < 50)  counts[0]++;
+    else if (g < 60)  counts[1]++;
+    else if (g < 75)  counts[2]++;
+    else if (g < 90)  counts[3]++;
+    else              counts[4]++;
+  });
+
+  const COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#3b82f6'];
+  const maxVal = Math.max(...counts, 1);
+  const PAD    = { top:30, right:20, bottom:50, left:40 };
+  const chartW = W - PAD.left - PAD.right;
+  const chartH = H - PAD.top  - PAD.bottom;
+  const barW   = (chartW / bands.length) * 0.65;
+  const gap    = (chartW / bands.length) * 0.35 / 2;
+
+  // Grid lines
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+  ctx.lineWidth   = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = PAD.top + chartH - (i / 4) * chartH;
+    ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(W - PAD.right, y); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.font = '11px Inter'; ctx.textAlign = 'right';
+    ctx.fillText(Math.round((i/4)*maxVal), PAD.left - 5, y + 4);
+  }
+
+  // Bars
+  bands.forEach((label, i) => {
+    const x    = PAD.left + i * (chartW / bands.length) + gap;
+    const barH = counts[i] === 0 ? 0 : Math.max((counts[i] / maxVal) * chartH, 4);
+    const y    = PAD.top + chartH - barH;
+
+    // Gradient fill
+    const grad = ctx.createLinearGradient(0, y, 0, y + barH);
+    grad.addColorStop(0, COLORS[i]);
+    grad.addColorStop(1, COLORS[i] + '88');
+    ctx.fillStyle   = grad;
+    ctx.beginPath();
+    ctx.roundRect(x, y, barW, barH, 4);
+    ctx.fill();
+
+    // Count label on top
+    if (counts[i] > 0) {
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 13px Inter'; ctx.textAlign = 'center';
+      ctx.fillText(counts[i], x + barW/2, y - 6);
+    }
+
+    // Band label below
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.font = '11px Inter'; ctx.textAlign = 'center';
+    ctx.fillText(label, x + barW/2, H - PAD.bottom + 18);
+  });
+
+  document.getElementById('chart-note').textContent =
+    `Based on ${preds.length} prediction${preds.length !== 1 ? 's' : ''}`;
+}
+
+// ── Auto-refresh countdown ────────────────────────────────────────────────────
+function startCountdown() {
+  _refreshTimer = 30;
+  _countdown = setInterval(() => {
+    _refreshTimer--;
+    document.getElementById('refresh-countdown').textContent =
+      `Next refresh in ${_refreshTimer}s`;
+    if (_refreshTimer <= 0) {
+      clearInterval(_countdown);
+      loadDashboard();
+      startCountdown();
+    }
+  }, 1000);
+}
+
+// ── Animated count-up ─────────────────────────────────────────────────────────
+function animateCount(elId, target) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  const start    = parseInt(el.textContent) || 0;
+  const duration = 800;
+  const fps      = 60;
+  const frames   = Math.round(duration / (1000/fps));
+  let frame = 0;
+  const iv = setInterval(() => {
+    frame++;
+    const p = frame / frames;
+    el.textContent = Math.round(start + (target - start) * (1 - Math.pow(1 - p, 3)));
+    if (frame >= frames) { el.textContent = target; clearInterval(iv); }
+  }, 1000/fps);
+}
+</script>
+{% endblock %}

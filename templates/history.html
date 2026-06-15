@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+{% block title %}Prediction History — Student Performance Predictor{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1 class="page-title">Prediction History</h1>
+  <p class="page-subtitle">Look up past predictions for any student by their Student ID.</p>
+</div>
+
+<!-- ── Search bar ────────────────────────────────────────────────────────── -->
+<div class="card search-card">
+  <div class="search-row">
+    <div class="form-group" style="flex:1; margin:0;">
+      <input type="text" id="history-sid" placeholder="Enter Student ID (e.g. STU001)"
+             class="search-input" autocomplete="off"
+             pattern="[A-Za-z0-9_\-]{3,20}" maxlength="20" />
+    </div>
+    <button class="btn btn-primary" id="fetch-history-btn">
+      <span class="btn-text">🔍 Search</span>
+      <span class="btn-loader" hidden><span class="spinner"></span></span>
+    </button>
+    <button class="btn btn-ghost" id="export-csv-btn" disabled title="Export to CSV">
+      ⬇️ Export CSV
+    </button>
+  </div>
+</div>
+
+<!-- ── Student info strip (hidden until loaded) ───────────────────────────── -->
+<div class="student-info-strip card" id="student-strip" hidden>
+  <div class="student-avatar" id="student-avatar">?</div>
+  <div class="student-meta">
+    <h2 class="student-name" id="strip-name">—</h2>
+    <p class="student-id-label" id="strip-id">—</p>
+  </div>
+  <div class="student-stats">
+    <div class="stat-pill">
+      <span class="stat-pill-value" id="strip-count">0</span>
+      <span class="stat-pill-label">Predictions</span>
+    </div>
+    <div class="stat-pill">
+      <span class="stat-pill-value" id="strip-avg">—</span>
+      <span class="stat-pill-label">Avg Grade</span>
+    </div>
+    <div class="stat-pill">
+      <span class="stat-pill-value" id="strip-best">—</span>
+      <span class="stat-pill-label">Best Grade</span>
+    </div>
+  </div>
+</div>
+
+<!-- ── History table ─────────────────────────────────────────────────────── -->
+<div class="card table-card" id="history-table-card" hidden>
+  <div class="table-header">
+    <h3 class="table-title">Prediction Records</h3>
+    <span class="table-subtitle" id="table-subtitle"></span>
+  </div>
+
+  <div class="table-wrapper">
+    <table class="data-table" id="history-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Grade</th>
+          <th>Risk</th>
+          <th>Confidence</th>
+          <th>Attendance</th>
+          <th>Study Hrs</th>
+          <th>Assignment</th>
+          <th>Quiz</th>
+          <th>GPA</th>
+          <th>Timestamp</th>
+        </tr>
+      </thead>
+      <tbody id="history-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ── Empty state ────────────────────────────────────────────────────────── -->
+<div class="empty-state" id="history-empty" hidden>
+  <div class="empty-icon">🔍</div>
+  <h3>No predictions found</h3>
+  <p>No records were found for this Student ID. Try making a prediction first.</p>
+  <a href="{{ url_for('main.index') }}" class="btn btn-primary">Make a Prediction</a>
+</div>
+
+<!-- ── Initial placeholder ───────────────────────────────────────────────── -->
+<div class="empty-state" id="history-placeholder">
+  <div class="empty-icon">📋</div>
+  <h3>Enter a Student ID above to view their prediction history</h3>
+  <p>All past predictions are stored securely and can be retrieved at any time.</p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  let _predictions = [];
+
+  // Pre-fill from URL query param
+  const urlSid = new URLSearchParams(window.location.search).get('student_id');
+  if (urlSid) {
+    document.getElementById('history-sid').value = urlSid;
+    fetchHistory(urlSid);
+  }
+
+  document.getElementById('fetch-history-btn').addEventListener('click', () => {
+    const sid = document.getElementById('history-sid').value.trim().toUpperCase();
+    if (!sid || !/^[A-Za-z0-9_\-]{3,20}$/.test(sid)) {
+      showToast('Please enter a valid Student ID (3–20 characters).', 'error');
+      return;
+    }
+    fetchHistory(sid);
+  });
+
+  document.getElementById('history-sid').addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('fetch-history-btn').click();
+  });
+
+  async function fetchHistory(sid) {
+    const btn  = document.getElementById('fetch-history-btn');
+    const text = btn.querySelector('.btn-text');
+    const load = btn.querySelector('.btn-loader');
+    text.hidden = true; load.hidden = false; btn.disabled = true;
+
+    hide('student-strip'); hide('history-table-card'); hide('history-empty');
+    hide('history-placeholder');
+
+    try {
+      const res  = await fetch(`/api/history?student_id=${encodeURIComponent(sid)}`);
+      const json = await res.json();
+
+      if (!res.ok || !json.success) {
+        if (res.status === 404) { show('history-empty'); }
+        else { showToast(json.error || 'Failed to fetch history.', 'error'); show('history-placeholder'); }
+        return;
+      }
+
+      _predictions = json.predictions;
+      renderStudentStrip(json, sid);
+      renderTable(json.predictions);
+      document.getElementById('export-csv-btn').disabled = false;
+      show('student-strip'); show('history-table-card');
+
+    } catch (err) {
+      showToast('Network error.', 'error');
+      show('history-placeholder');
+    } finally {
+      text.hidden = false; load.hidden = true; btn.disabled = false;
+    }
+  }
+
+  function renderStudentStrip(json, sid) {
+    const grades = json.predictions.map(p => p.predicted_grade);
+    const avg    = grades.length ? (grades.reduce((a,b) => a+b, 0) / grades.length).toFixed(1) : '—';
+    const best   = grades.length ? Math.max(...grades).toFixed(1) : '—';
+
+    document.getElementById('strip-name').textContent   = json.student_name || sid;
+    document.getElementById('strip-id').textContent     = sid;
+    document.getElementById('strip-count').textContent  = json.prediction_count;
+    document.getElementById('strip-avg').textContent    = avg;
+    document.getElementById('strip-best').textContent   = best;
+    document.getElementById('student-avatar').textContent =
+      (json.student_name || sid).charAt(0).toUpperCase();
+  }
+
+  function renderTable(preds) {
+    const tbody = document.getElementById('history-tbody');
+    tbody.innerHTML = '';
+    document.getElementById('table-subtitle').textContent =
+      `Showing ${preds.length} record${preds.length !== 1 ? 's' : ''}`;
+
+    if (!preds.length) { show('history-empty'); hide('history-table-card'); return; }
+
+    const riskIcon = { low:'🟢', medium:'🟡', high:'🟠', critical:'🔴' };
+
+    preds.forEach((p, i) => {
+      const tr = document.createElement('tr');
+      const ts = new Date(p.prediction_timestamp).toLocaleString();
+      const conf = Math.round(p.confidence_score * 100);
+      tr.innerHTML = `
+        <td>${i + 1}</td>
+        <td><strong class="grade-cell grade-${p.risk_level}">${p.predicted_grade.toFixed(1)}</strong></td>
+        <td>${riskIcon[p.risk_level] || ''} ${p.risk_level}</td>
+        <td><div class="mini-bar-wrap"><div class="mini-bar" style="width:${conf}%"></div><span>${conf}%</span></div></td>
+        <td>${p.attendance_percentage ?? '—'}%</td>
+        <td>${p.study_hours ?? '—'} hrs</td>
+        <td>${p.assignment_score ?? '—'}</td>
+        <td>${p.quiz_marks ?? '—'}</td>
+        <td>${p.previous_gpa ?? '—'}</td>
+        <td class="ts-cell">${ts}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+
+  // ── CSV Export ──────────────────────────────────────────────────────────────
+  document.getElementById('export-csv-btn').addEventListener('click', () => {
+    if (!_predictions.length) return;
+    const headers = ['#','Grade','Risk','Confidence','Attendance%','StudyHrs','Assignment','Quiz','GPA','Timestamp'];
+    const rows    = _predictions.map((p, i) => [
+      i+1, p.predicted_grade, p.risk_level,
+      Math.round(p.confidence_score*100)+'%',
+      p.attendance_percentage, p.study_hours,
+      p.assignment_score, p.quiz_marks,
+      p.previous_gpa,
+      new Date(p.prediction_timestamp).toISOString(),
+    ]);
+    const csv  = [headers, ...rows].map(r => r.join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = `history_${document.getElementById('history-sid').value}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+    showToast('CSV exported! 📥', 'success');
+  });
+
+  function show(id) { const el = document.getElementById(id); if (el) el.hidden = false; }
+  function hide(id) { const el = document.getElementById(id); if (el) el.hidden = true;  }
+</script>
+{% endblock %}

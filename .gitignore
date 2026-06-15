@@ -1,0 +1,44 @@
+# GradeAI — Git Ignore
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Flask / App
+*.db
+*.sqlite
+instance/
+
+# Environment
+.env
+
+# Model artefacts (large — should be reproduced via train_models.py)
+models/*.pkl
+models/training_report.txt
+models/model_metadata.json
+
+# Logs
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test / Coverage
+.pytest_cache/
+.coverage
+htmlcov/

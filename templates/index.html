@@ -1,0 +1,382 @@
+{% extends "base.html" %}
+{% block title %}Predict — Student Performance Predictor{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1 class="page-title">Grade Predictor <span class="badge-ai">AI Powered</span></h1>
+  <p class="page-subtitle">Enter student details below to get an instant performance prediction powered by Random Forest &amp; XGBoost ensemble models.</p>
+</div>
+
+<div class="two-col-layout">
+
+  <!-- ── Left: Prediction Form ─────────────────────────────────────── -->
+  <section class="card form-card">
+    <div class="card-header">
+      <span class="card-icon">📝</span>
+      <h2 class="card-title">Student Details</h2>
+    </div>
+
+    <form id="predict-form" novalidate>
+
+      <!-- Student Info -->
+      <div class="form-section">
+        <h3 class="form-section-title">Student Information</h3>
+        <div class="form-row two-col">
+          <div class="form-group">
+            <label for="student_id">Student ID <span class="required">*</span></label>
+            <input type="text" id="student_id" name="student_id"
+                   placeholder="e.g. STU001"
+                   pattern="[A-Za-z0-9_\-]{3,20}"
+                   maxlength="20" required
+                   autocomplete="off" />
+            <span class="field-hint">3–20 alphanumeric characters</span>
+            <span class="field-error" id="err-student_id"></span>
+          </div>
+          <div class="form-group">
+            <label for="student_name">Student Name <span class="required">*</span></label>
+            <input type="text" id="student_name" name="student_name"
+                   placeholder="e.g. John Doe"
+                   minlength="2" maxlength="100" required />
+            <span class="field-error" id="err-student_name"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Academic Features -->
+      <div class="form-section">
+        <h3 class="form-section-title">Academic Metrics</h3>
+
+        <!-- Attendance -->
+        <div class="form-group slider-group">
+          <label for="attendance_percentage">
+            Attendance Percentage
+            <span class="value-badge" id="val-attendance">75%</span>
+          </label>
+          <input type="range" id="attendance_percentage" name="attendance_percentage"
+                 min="0" max="100" step="0.5" value="75"
+                 class="range-slider" />
+          <div class="range-labels"><span>0%</span><span>100%</span></div>
+          <span class="field-error" id="err-attendance_percentage"></span>
+        </div>
+
+        <!-- Study Hours -->
+        <div class="form-group slider-group">
+          <label for="study_hours_per_week">
+            Study Hours / Week
+            <span class="value-badge" id="val-study_hours">15 hrs</span>
+          </label>
+          <input type="range" id="study_hours_per_week" name="study_hours_per_week"
+                 min="0" max="60" step="0.5" value="15"
+                 class="range-slider" />
+          <div class="range-labels"><span>0 hrs</span><span>60 hrs</span></div>
+          <span class="field-error" id="err-study_hours_per_week"></span>
+        </div>
+
+        <div class="form-row two-col">
+          <!-- Assignment Score -->
+          <div class="form-group">
+            <label for="assignment_score">
+              Assignment Score
+              <span class="value-badge" id="val-assignment">75</span>
+            </label>
+            <input type="range" id="assignment_score" name="assignment_score"
+                   min="0" max="100" step="1" value="75"
+                   class="range-slider" />
+            <div class="range-labels"><span>0</span><span>100</span></div>
+            <span class="field-error" id="err-assignment_score"></span>
+          </div>
+
+          <!-- Quiz Marks -->
+          <div class="form-group">
+            <label for="quiz_marks">
+              Quiz Marks
+              <span class="value-badge" id="val-quiz">75</span>
+            </label>
+            <input type="range" id="quiz_marks" name="quiz_marks"
+                   min="0" max="100" step="1" value="75"
+                   class="range-slider" />
+            <div class="range-labels"><span>0</span><span>100</span></div>
+            <span class="field-error" id="err-quiz_marks"></span>
+          </div>
+        </div>
+
+        <!-- Previous GPA -->
+        <div class="form-group slider-group">
+          <label for="previous_gpa">
+            Previous GPA
+            <span class="value-badge" id="val-gpa">3.00</span>
+          </label>
+          <input type="range" id="previous_gpa" name="previous_gpa"
+                 min="0" max="4" step="0.01" value="3.0"
+                 class="range-slider" />
+          <div class="range-labels"><span>0.0</span><span>4.0</span></div>
+          <span class="field-error" id="err-previous_gpa"></span>
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <button type="button" id="reset-btn" class="btn btn-ghost">
+          ↺ Reset
+        </button>
+        <button type="submit" id="predict-btn" class="btn btn-primary">
+          <span class="btn-text">🔮 Predict Grade</span>
+          <span class="btn-loader" hidden>
+            <span class="spinner"></span> Predicting…
+          </span>
+        </button>
+      </div>
+
+    </form>
+  </section>
+
+  <!-- ── Right: Result Card ─────────────────────────────────────────── -->
+  <section class="result-panel" id="result-panel">
+
+    <!-- Placeholder (shown before first prediction) -->
+    <div class="result-placeholder" id="result-placeholder">
+      <div class="placeholder-icon">🎯</div>
+      <h3>Your prediction will appear here</h3>
+      <p>Fill in the student details on the left and click <strong>Predict Grade</strong>.</p>
+    </div>
+
+    <!-- Result (hidden until prediction arrives) -->
+    <div class="result-card card" id="result-card" hidden>
+
+      <div class="result-header">
+        <div>
+          <p class="result-student-id" id="res-student-id"></p>
+          <h2 class="result-student-name" id="res-student-name"></h2>
+        </div>
+        <div class="risk-badge" id="res-risk-badge"></div>
+      </div>
+
+      <!-- Big Grade -->
+      <div class="grade-display">
+        <div class="grade-circle" id="grade-circle">
+          <span class="grade-value" id="res-grade">--</span>
+          <span class="grade-label">/ 100</span>
+        </div>
+        <div class="grade-meta">
+          <div class="meta-item">
+            <span class="meta-label">RF Prediction</span>
+            <span class="meta-value" id="res-rf">--</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-label">XGB Prediction</span>
+            <span class="meta-value" id="res-xgb">--</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Confidence bar -->
+      <div class="confidence-section">
+        <div class="confidence-header">
+          <span>Model Confidence</span>
+          <span id="res-confidence-pct">--%</span>
+        </div>
+        <div class="confidence-bar-track">
+          <div class="confidence-bar-fill" id="res-confidence-bar"></div>
+        </div>
+      </div>
+
+      <!-- Feature summary -->
+      <div class="feature-summary" id="res-features"></div>
+
+      <div class="result-footer">
+        <span class="result-ts" id="res-ts"></span>
+        <button class="btn btn-ghost btn-sm" id="view-history-btn" onclick="viewStudentHistory()">
+          View History →
+        </button>
+      </div>
+
+    </div>
+  </section>
+
+</div><!-- end two-col-layout -->
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── Slider value badges ─────────────────────────────────────────────────────
+const sliderMap = {
+  attendance_percentage: { badge: 'val-attendance',  fmt: v => v + '%'  },
+  study_hours_per_week:  { badge: 'val-study_hours', fmt: v => v + ' hrs' },
+  assignment_score:      { badge: 'val-assignment',  fmt: v => v        },
+  quiz_marks:            { badge: 'val-quiz',        fmt: v => v        },
+  previous_gpa:          { badge: 'val-gpa',         fmt: v => parseFloat(v).toFixed(2) },
+};
+
+Object.entries(sliderMap).forEach(([id, cfg]) => {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('input', () => {
+    document.getElementById(cfg.badge).textContent = cfg.fmt(el.value);
+  });
+});
+
+// ── Reset ───────────────────────────────────────────────────────────────────
+document.getElementById('reset-btn').addEventListener('click', () => {
+  document.getElementById('predict-form').reset();
+  Object.entries(sliderMap).forEach(([id, cfg]) => {
+    const el = document.getElementById(id);
+    if (el) document.getElementById(cfg.badge).textContent = cfg.fmt(el.value);
+  });
+  document.getElementById('result-card').hidden = true;
+  document.getElementById('result-placeholder').style.display = 'flex';
+  clearAllErrors();
+});
+
+// ── Form submit ──────────────────────────────────────────────────────────────
+document.getElementById('predict-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!clientValidate()) return;
+
+  const btn     = document.getElementById('predict-btn');
+  const btnText = btn.querySelector('.btn-text');
+  const loader  = btn.querySelector('.btn-loader');
+  btnText.hidden = true; loader.hidden = false; btn.disabled = true;
+
+  const payload = {
+    student_id:            document.getElementById('student_id').value.trim(),
+    student_name:          document.getElementById('student_name').value.trim(),
+    attendance_percentage: parseFloat(document.getElementById('attendance_percentage').value),
+    study_hours_per_week:  parseFloat(document.getElementById('study_hours_per_week').value),
+    assignment_score:      parseFloat(document.getElementById('assignment_score').value),
+    quiz_marks:            parseFloat(document.getElementById('quiz_marks').value),
+    previous_gpa:          parseFloat(document.getElementById('previous_gpa').value),
+  };
+
+  try {
+    const res  = await fetch('/api/predict', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(payload),
+    });
+    const json = await res.json();
+
+    if (!res.ok || !json.success) {
+      const msg = json.errors ? json.errors.join(' ') : (json.error || 'Prediction failed.');
+      showToast(msg, 'error');
+      return;
+    }
+
+    renderResult(json.prediction, payload);
+    showToast('Prediction complete! 🎉', 'success');
+  } catch (err) {
+    showToast('Network error. Is the server running?', 'error');
+  } finally {
+    btnText.hidden = false; loader.hidden = true; btn.disabled = false;
+  }
+});
+
+// ── Render result card ────────────────────────────────────────────────────────
+function renderResult(pred, inputs) {
+  document.getElementById('result-placeholder').style.display = 'none';
+  const card = document.getElementById('result-card');
+  card.hidden = false;
+
+  document.getElementById('res-student-id').textContent   = pred.student_id;
+  document.getElementById('res-student-name').textContent = pred.student_name;
+
+  // Grade (animate count-up)
+  animateNumber('res-grade', pred.predicted_grade, 1200);
+
+  // RF / XGB
+  document.getElementById('res-rf').textContent  = pred.rf_prediction.toFixed(1);
+  document.getElementById('res-xgb').textContent = pred.xgb_prediction.toFixed(1);
+
+  // Risk badge
+  const riskBadge = document.getElementById('res-risk-badge');
+  const riskMap   = { low:'🟢 Low Risk', medium:'🟡 Medium Risk', high:'🟠 High Risk', critical:'🔴 Critical' };
+  riskBadge.textContent  = riskMap[pred.risk_level] || pred.risk_level;
+  riskBadge.className    = `risk-badge risk-${pred.risk_level}`;
+
+  // Grade circle color
+  const circle = document.getElementById('grade-circle');
+  circle.className = `grade-circle grade-${pred.risk_level}`;
+
+  // Confidence bar
+  const pct = Math.round(pred.confidence_score * 100);
+  document.getElementById('res-confidence-pct').textContent = pct + '%';
+  const bar = document.getElementById('res-confidence-bar');
+  bar.style.width = '0%';
+  setTimeout(() => { bar.style.width = pct + '%'; }, 100);
+
+  // Feature summary
+  const featHtml = `
+    <div class="feat-grid">
+      <div class="feat-item"><span>📅 Attendance</span><strong>${inputs.attendance_percentage}%</strong></div>
+      <div class="feat-item"><span>📚 Study Hrs</span><strong>${inputs.study_hours_per_week} hrs/wk</strong></div>
+      <div class="feat-item"><span>📝 Assignments</span><strong>${inputs.assignment_score}/100</strong></div>
+      <div class="feat-item"><span>❓ Quiz</span><strong>${inputs.quiz_marks}/100</strong></div>
+      <div class="feat-item"><span>🏆 GPA</span><strong>${inputs.previous_gpa.toFixed(2)}</strong></div>
+    </div>`;
+  document.getElementById('res-features').innerHTML = featHtml;
+
+  // Timestamp
+  document.getElementById('res-ts').textContent =
+    'Predicted at ' + new Date(pred.prediction_timestamp).toLocaleString();
+
+  // Store for history button
+  window._lastStudentId = pred.student_id;
+}
+
+function viewStudentHistory() {
+  if (window._lastStudentId) {
+    window.location.href = `/history?student_id=${window._lastStudentId}`;
+  }
+}
+
+// ── Client-side validation ────────────────────────────────────────────────────
+function clientValidate() {
+  clearAllErrors();
+  let ok = true;
+
+  const sid = document.getElementById('student_id').value.trim();
+  if (!sid || !/^[A-Za-z0-9_\-]{3,20}$/.test(sid)) {
+    setError('student_id', 'Student ID must be 3–20 alphanumeric characters.');
+    ok = false;
+  }
+
+  const name = document.getElementById('student_name').value.trim();
+  if (!name || name.length < 2) {
+    setError('student_name', 'Please enter a valid name (min 2 characters).');
+    ok = false;
+  }
+
+  return ok;
+}
+
+function setError(field, msg) {
+  const el = document.getElementById('err-' + field);
+  if (el) { el.textContent = msg; el.style.display = 'block'; }
+  const input = document.getElementById(field);
+  if (input) input.classList.add('input-error');
+}
+
+function clearAllErrors() {
+  document.querySelectorAll('.field-error').forEach(el => {
+    el.textContent = ''; el.style.display = 'none';
+  });
+  document.querySelectorAll('.input-error').forEach(el => el.classList.remove('input-error'));
+}
+
+// ── Animate number count-up ───────────────────────────────────────────────────
+function animateNumber(elId, target, duration) {
+  const el  = document.getElementById(elId);
+  const fps = 60;
+  const frames = Math.round(duration / (1000 / fps));
+  let frame = 0;
+  const interval = setInterval(() => {
+    frame++;
+    const progress = frame / frames;
+    const eased    = 1 - Math.pow(1 - progress, 3);  // ease-out-cubic
+    el.textContent = (eased * target).toFixed(1);
+    if (frame >= frames) {
+      el.textContent = target.toFixed(1);
+      clearInterval(interval);
+    }
+  }, 1000 / fps);
+}
+</script>
+{% endblock %}
